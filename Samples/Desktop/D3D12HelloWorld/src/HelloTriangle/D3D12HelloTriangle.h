@@ -12,6 +12,7 @@
 #pragma once
 
 #include "DXSample.h"
+#include <d3d12video.h>
 
 using namespace DirectX;
 
@@ -64,6 +65,23 @@ private:
     HANDLE m_fenceEvent;
     ComPtr<ID3D12Fence> m_fence;
     UINT64 m_fenceValue;
+
+    ComPtr<ID3D12QueryHeap> m_queryHeap;
+    ComPtr<ID3D12QueryHeap> m_queryVideoHeap;
+    ComPtr<ID3D12Resource> m_queryBuffer;
+    ComPtr<ID3D12Resource> m_queryVideoBuffer;
+
+    ComPtr<ID3D12CommandQueue>           m_decodeQueue;
+    ComPtr<ID3D12CommandAllocator>       m_decodeCommandAllocator;
+    ComPtr<ID3D12VideoDecodeCommandList> m_decodeCommandList;
+    ComPtr<ID3D12Fence>                  m_decodeFence;
+    uint64_t                             m_decodeFenceValue;
+
+    ComPtr<ID3D12CommandQueue>           m_encodeQueue;
+    ComPtr<ID3D12CommandAllocator>       m_encodeCommandAllocator;
+    ComPtr<ID3D12VideoEncodeCommandList> m_encodeCommandList;
+    ComPtr<ID3D12Fence>                  m_encodeFence;
+    uint64_t                             m_encodeFenceValue;
 
     void LoadPipeline();
     void LoadAssets();

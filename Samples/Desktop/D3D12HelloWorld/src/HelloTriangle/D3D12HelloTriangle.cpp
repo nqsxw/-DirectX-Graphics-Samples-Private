@@ -249,6 +249,50 @@ void D3D12HelloTriangle::LoadAssets()
         // complete before continuing.
         WaitForPreviousFrame();
     }
+
+    D3D12_QUERY_HEAP_DESC heapDesc{};
+    heapDesc.Count = 64;
+    heapDesc.Type = D3D12_QUERY_HEAP_TYPE_TIMESTAMP;
+    ThrowIfFailed(m_device->CreateQueryHeap(&heapDesc, IID_PPV_ARGS(m_queryHeap.GetAddressOf())));
+
+    heapDesc.Type = D3D12_QUERY_HEAP_TYPE_VIDEO_DECODE_STATISTICS;
+    ThrowIfFailed(m_device->CreateQueryHeap(&heapDesc, IID_PPV_ARGS(m_queryVideoHeap.GetAddressOf())));
+
+    D3D12_HEAP_PROPERTIES props{};
+    props.Type = D3D12_HEAP_TYPE_READBACK;
+
+    D3D12_RESOURCE_DESC bufferDesc{};
+    bufferDesc.Dimension        = D3D12_RESOURCE_DIMENSION_BUFFER;
+    bufferDesc.Layout           = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+    bufferDesc.Width            = 4096;
+    bufferDesc.Height           = 1;
+    bufferDesc.DepthOrArraySize = 1;
+    bufferDesc.MipLevels        = 1;
+    bufferDesc.SampleDesc       = { 1, 0 };
+    
+    ThrowIfFailed(m_device->CreateCommittedResource(&props, D3D12_HEAP_FLAG_NONE, &bufferDesc, D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(m_queryBuffer.GetAddressOf())));
+
+    bufferDesc.Width = 10240;
+    ThrowIfFailed(m_device->CreateCommittedResource(&props, D3D12_HEAP_FLAG_NONE, &bufferDesc, D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(m_queryVideoBuffer.GetAddressOf())));
+
+    D3D12_COMMAND_QUEUE_DESC queueDesc{};
+    queueDesc.Type = D3D12_COMMAND_LIST_TYPE_VIDEO_DECODE;
+    ThrowIfFailed(m_device->CreateFence(m_decodeFenceValue, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(m_decodeFence.GetAddressOf())));
+    ThrowIfFailed(m_device->CreateCommandQueue(&queueDesc, IID_PPV_ARGS(m_decodeQueue.GetAddressOf())));
+    ThrowIfFailed(m_device->CreateCommandAllocator(queueDesc.Type, IID_PPV_ARGS(m_decodeCommandAllocator.GetAddressOf())));
+    ThrowIfFailed(m_device->CreateCommandList(0, queueDesc.Type, m_decodeCommandAllocator.Get(), nullptr, IID_PPV_ARGS(m_decodeCommandList.GetAddressOf())));
+    ThrowIfFailed(m_decodeCommandList->Close());
+    m_decodeQueue->ExecuteCommandLists(1, (ID3D12CommandList **)m_decodeCommandList.GetAddressOf());
+    ThrowIfFailed(m_decodeQueue->Signal(m_decodeFence.Get(), m_decodeFenceValue++));
+
+    queueDesc.Type = D3D12_COMMAND_LIST_TYPE_VIDEO_ENCODE;
+    ThrowIfFailed(m_device->CreateFence(m_encodeFenceValue, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(m_encodeFence.GetAddressOf())));
+    ThrowIfFailed(m_device->CreateCommandQueue(&queueDesc, IID_PPV_ARGS(m_encodeQueue.GetAddressOf())));
+    ThrowIfFailed(m_device->CreateCommandAllocator(queueDesc.Type, IID_PPV_ARGS(m_encodeCommandAllocator.GetAddressOf())));
+    ThrowIfFailed(m_device->CreateCommandList(0, queueDesc.Type, m_encodeCommandAllocator.Get(), nullptr, IID_PPV_ARGS(m_encodeCommandList.GetAddressOf())));
+    ThrowIfFailed(m_encodeCommandList->Close());
+    m_encodeQueue->ExecuteCommandLists(1, (ID3D12CommandList **)m_encodeCommandList.GetAddressOf());
+    ThrowIfFailed(m_encodeQueue->Signal(m_encodeFence.Get(), m_encodeFenceValue++));
 }
 
 // Update frame-based values.
@@ -268,6 +312,27 @@ void D3D12HelloTriangle::OnRender()
 
     // Present the frame.
     ThrowIfFailed(m_swapChain->Present(1, 0));
+
+    ThrowIfFailed(m_decodeCommandAllocator->Reset());
+    ThrowIfFailed(m_decodeCommandList->Reset(m_decodeCommandAllocator.Get()));
+    m_decodeCommandList->EndQuery(m_queryHeap.Get(), D3D12_QUERY_TYPE_TIMESTAMP, 0);
+    m_decodeCommandList->EndQuery(m_queryVideoHeap.Get(), D3D12_QUERY_TYPE_VIDEO_DECODE_STATISTICS, 0);
+
+    m_decodeCommandList->ResolveQueryData(m_queryHeap.Get(), D3D12_QUERY_TYPE_TIMESTAMP, 0, 1, m_queryBuffer.Get(), 0);
+    m_decodeCommandList->ResolveQueryData(m_queryVideoHeap.Get(), D3D12_QUERY_TYPE_VIDEO_DECODE_STATISTICS, 0, 1, m_queryVideoBuffer.Get(), 0);
+
+    ThrowIfFailed(m_decodeCommandList->Close());
+    m_decodeQueue->ExecuteCommandLists(1, (ID3D12CommandList **)m_decodeCommandList.GetAddressOf());
+    ThrowIfFailed(m_decodeQueue->Signal(m_decodeFence.Get(), m_decodeFenceValue++));
+
+    ThrowIfFailed(m_encodeCommandAllocator->Reset());
+    ThrowIfFailed(m_encodeCommandList->Reset(m_encodeCommandAllocator.Get()));
+    m_encodeCommandList->EndQuery(m_queryHeap.Get(), D3D12_QUERY_TYPE_TIMESTAMP, 0);
+    m_encodeCommandList->ResolveQueryData(m_queryHeap.Get(), D3D12_QUERY_TYPE_TIMESTAMP, 0, 1, m_queryBuffer.Get(), 0);
+    ThrowIfFailed(m_encodeCommandList->Close());
+    m_encodeQueue->Wait(m_decodeFence.Get(), m_decodeFenceValue - 1);
+    m_encodeQueue->ExecuteCommandLists(1, (ID3D12CommandList **)m_encodeCommandList.GetAddressOf());
+    ThrowIfFailed(m_encodeQueue->Signal(m_encodeFence.Get(), m_encodeFenceValue++));
 
     WaitForPreviousFrame();
 }
